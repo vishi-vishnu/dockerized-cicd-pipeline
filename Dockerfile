@@ -27,6 +27,11 @@ ENV NODE_ENV=production \
     PORT=3000
 WORKDIR /app
 
+# The app runs with `node` only, so remove npm, npx, yarn and corepack from the image.
+# Smaller image, and fewer packages for attackers or the Trivy scan to find problems in.
+RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx \
+           /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
+
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY public ./public
