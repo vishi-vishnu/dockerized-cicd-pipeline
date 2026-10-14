@@ -1,0 +1,12 @@
+# Copy this file to terraform.tfvars and fill it in. terraform.tfvars is ignored by git.
+
+# Paste the ONE line from your pulse_deploy.pub file (the public key, never the private one)
+ssh_public_key = "ssh-ed25519 AAAA... vishnu-pulse-deploy"
+
+# Where alarm and budget emails go. Leave "" to skip.
+alert_email = "you@example.com"
+
+# Optional
+# region             = "ap-south-1"
+# instance_type      = "t3.micro"
+# monthly_budget_usd = 5

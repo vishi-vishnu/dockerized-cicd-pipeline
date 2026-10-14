@@ -1,0 +1,26 @@
+#!/bin/bash
+# Runs once, the first time the EC2 server starts.
+set -euxo pipefail
+
+# Docker
+dnf install -y docker
+systemctl enable --now docker
+usermod -aG docker ec2-user
+
+# 1 GB swap: a t3.micro has only 1 GB of memory, so this avoids out-of-memory kills while pulling images
+if [ ! -f /swapfile ]; then
+  dd if=/dev/zero of=/swapfile bs=1M count=1024
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# Folder for the deploy script, the deploy history and the CloudWatch settings
+mkdir -p /opt/pulse
+cat > /opt/pulse/pulse.env <<EOF
+AWS_REGION=${region}
+LOG_GROUP=${log_group}
+EOF
+touch /opt/pulse/deployments.log
+chown -R ec2-user:ec2-user /opt/pulse
