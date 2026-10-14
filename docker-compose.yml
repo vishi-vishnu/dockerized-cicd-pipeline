@@ -1,0 +1,19 @@
+# Run the production image on your own computer:
+#   docker compose up --build
+# Then open http://localhost:3000
+services:
+  pulse:
+    build:
+      context: .
+      args:
+        APP_VERSION: local
+        GIT_SHA: local
+    image: pulse:local
+    ports:
+      - "3000:3000"
+    environment:
+      APP_ENV: local
+    volumes:
+      # The same folder the EC2 server uses for the deploy history (read-only inside the container)
+      - ./scripts/sample-data:/data:ro
+    restart: unless-stopped

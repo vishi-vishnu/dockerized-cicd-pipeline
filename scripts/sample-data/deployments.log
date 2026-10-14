@@ -1,0 +1,3 @@
+{"time":"2026-10-14T09:12:40Z","tag":"sha-3f9c2e1","status":"success","previous":null}
+{"time":"2026-10-14T15:47:03Z","tag":"sha-8a41d07","status":"success","previous":"sha-3f9c2e1"}
+{"time":"2026-10-15T10:05:22Z","tag":"sha-c27be95","status":"rolled_back","previous":"sha-8a41d07"}
