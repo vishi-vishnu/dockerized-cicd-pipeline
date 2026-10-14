@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pulse · deployment status</title>
+    <meta name="description" content="Live status of the Pulse app: which version is running and every deploy and rollback." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23176b5b'/%3E%3Cpath d='M5 17h6l3-8 4 15 3-7h6' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="top">
+        <div>
+          <p class="eyebrow">Dockerized CI/CD pipeline demo</p>
+          <h1>Pulse</h1>
+          <p class="lead">This page is the app that the pipeline ships. Every push to <code>main</code> is tested, built into a Docker image, scanned, pushed to Docker Hub and deployed to AWS EC2. If the new version is unhealthy, the server rolls back on its own.</p>
+        </div>
+        <div class="status" id="status" data-state="loading">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="status-text">Checking…</span>
+        </div>
+      </header>
+
+      <section class="tiles" aria-label="What is running now">
+        <div class="tile"><span class="label">Version</span><span class="value" id="version">–</span></div>
+        <div class="tile"><span class="label">Commit</span><span class="value mono" id="commit">–</span></div>
+        <div class="tile"><span class="label">Uptime</span><span class="value" id="uptime">–</span></div>
+        <div class="tile"><span class="label">Requests served</span><span class="value" id="requests">–</span></div>
+      </section>
+
+      <section class="panel" aria-labelledby="runtime-h">
+        <h2 id="runtime-h">Running on</h2>
+        <dl class="facts">
+          <div><dt>Environment</dt><dd id="env">–</dd></div>
+          <div><dt>Container</dt><dd class="mono" id="host">–</dd></div>
+          <div><dt>Node.js</dt><dd class="mono" id="node">–</dd></div>
+          <div><dt>Image built</dt><dd id="built">–</dd></div>
+          <div><dt>Started</dt><dd id="started">–</dd></div>
+        </dl>
+      </section>
+
+      <section class="panel" aria-labelledby="pipe-h">
+        <h2 id="pipe-h">How a change gets here</h2>
+        <ol class="pipeline">
+          <li><b>Lint</b><span>ESLint, TypeScript checks</span></li>
+          <li><b>Test</b><span>Vitest, 80% coverage gate</span></li>
+          <li><b>Build</b><span>Multi-stage Docker image</span></li>
+          <li><b>Scan</b><span>Trivy blocks critical CVEs</span></li>
+          <li><b>Push</b><span>Docker Hub, tag = commit SHA</span></li>
+          <li><b>Deploy</b><span>SSH to EC2, health check</span></li>
+          <li><b>Verify</b><span>Rollback if unhealthy</span></li>
+        </ol>
+      </section>
+
+      <section class="panel" aria-labelledby="hist-h">
+        <div class="panel-head">
+          <h2 id="hist-h">Deployment history</h2>
+          <span class="hint" id="refreshed"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>When</th><th>Image tag</th><th>Result</th><th>Previous tag</th></tr></thead>
+            <tbody id="history">
+              <tr><td colspan="4" class="empty">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer class="foot">
+        <a href="/health">/health</a>
+        <a href="/api/info">/api/info</a>
+        <a href="/api/deployments">/api/deployments</a>
+        <a href="/metrics">/metrics</a>
+        <a id="repo" href="https://github.com/vishi-vishnu/dockerized-cicd-pipeline" rel="noopener">Source on GitHub</a>
+      </footer>
+    </main>
+  </body>
+</html>
