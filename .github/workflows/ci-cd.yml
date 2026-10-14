@@ -1,0 +1,208 @@
+# The whole path from a git push to a running container on AWS EC2.
+#
+#   test ──► build (run, scan, push) ──► deploy (main only)
+#   terraform ──────────────────────────┘
+#
+# Pull requests run test, build (with the image scan) and terraform, but never push or deploy.
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      simulate_bad_release:
+        description: Demo the automatic rollback. Builds an image whose health check fails only on the server.
+        type: boolean
+        default: false
+
+# A newer push to a pull request cancels the old run. Runs on main are never cancelled halfway.
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ${{ vars.DOCKERHUB_USERNAME || 'devvishnudocker' }}/pulse
+
+jobs:
+  test:
+    name: Lint, type check, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Check dependencies for known vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+      - run: npm run lint
+      - run: npm run typecheck
+      - name: Unit tests (fails below 80% line coverage)
+        run: npm run test:coverage
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage
+          path: coverage
+          retention-days: 7
+
+  build:
+    name: Build, run and scan the Docker image
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Work out the image tag (sha-<first 7 characters of the commit>)
+        id: meta
+        env:
+          BAD: ${{ inputs.simulate_bad_release == true }}
+        run: |
+          # A demo "bad release" gets its own tag, so it never overwrites a good image
+          if [ "$BAD" = "true" ]; then suffix="-bad"; else suffix=""; fi
+          {
+            echo "tag=sha-${GITHUB_SHA::7}${suffix}"
+            echo "bad=$BAD"
+            echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build the image (layers cached between runs)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+          build-args: |
+            APP_VERSION=1.0.${{ github.run_number }}
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ steps.meta.outputs.time }}
+            SIMULATE_BAD_RELEASE=${{ steps.meta.outputs.bad }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test the container
+        env:
+          REF: ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+        run: |
+          docker run -d --name smoke -p 3000:3000 "$REF"
+          for _ in $(seq 1 20); do
+            if curl -fsS http://localhost:3000/health > health.json; then break; fi
+            sleep 1
+          done
+          cat health.json
+          grep -q '"status":"ok"' health.json
+          grep -q "\"commit\":\"${GITHUB_SHA}\"" health.json
+          curl -fsS http://localhost:3000/ | grep -q '<h1>Pulse</h1>'
+          test "$(docker inspect --format '{{.Config.User}}' smoke)" = "node"
+          echo "Image size: $(docker image inspect --format '{{.Size}}' "$REF" | numfmt --to=iec)"
+          docker rm -f smoke
+
+      - name: Scan the image with Trivy (fail on critical or high issues that have a fix)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+
+      - name: Log in to Docker Hub
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push to Docker Hub
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          BAD: ${{ steps.meta.outputs.bad }}
+        run: |
+          docker push "$IMAGE:$TAG"
+          # "latest" always points to the newest good build
+          if [ "$BAD" != "true" ]; then
+            docker tag "$IMAGE:$TAG" "$IMAGE:latest"
+            docker push "$IMAGE:latest"
+          fi
+          echo "### Image pushed: $IMAGE:$TAG" >> "$GITHUB_STEP_SUMMARY"
+
+  terraform:
+    name: Terraform format and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.6
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  deploy:
+    name: Deploy to AWS EC2
+    needs: [build, terraform]
+    # Only for main, and only once the server address is saved in the repo settings.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.EC2_HOST != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: http://${{ vars.EC2_HOST }}
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      TAG: ${{ needs.build.outputs.tag }}
+      HOST: ${{ vars.EC2_HOST }}
+      SSH_USER: ${{ vars.EC2_USER || 'ec2-user' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up the SSH key
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 15 -H "$HOST" >> ~/.ssh/known_hosts
+
+      - name: Copy the deploy script and run it on the server
+        run: |
+          SSH="ssh -i ~/.ssh/deploy_key -o BatchMode=yes"
+          scp -i ~/.ssh/deploy_key -o BatchMode=yes scripts/deploy.sh "$SSH_USER@$HOST:/opt/pulse/deploy.sh"
+          $SSH "$SSH_USER@$HOST" "bash /opt/pulse/deploy.sh '$IMAGE' '$TAG'"
+
+      - name: Check the live site from the internet
+        run: |
+          for _ in $(seq 1 10); do
+            if curl -fsS "http://$HOST/health" > live.json; then break; fi
+            sleep 3
+          done
+          cat live.json
+          grep -q "\"commit\":\"${GITHUB_SHA}\"" live.json
+          {
+            echo "### Deployed \`$TAG\` to production"
+            echo "Live at http://$HOST"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

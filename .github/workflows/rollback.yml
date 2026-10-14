@@ -1,0 +1,53 @@
+# Manual rollback: run any older image tag again with one click.
+# GitHub > Actions > Roll back > Run workflow > type a tag such as sha-1a2b3c4
+name: Roll back
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Image tag to run (for example sha-1a2b3c4). See the Deployment history on the site or the tags on Docker Hub.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Deploy an earlier image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: http://${{ vars.EC2_HOST }}
+    env:
+      IMAGE: ${{ vars.DOCKERHUB_USERNAME || 'devvishnudocker' }}/pulse
+      TAG: ${{ inputs.tag }}
+      HOST: ${{ vars.EC2_HOST }}
+      SSH_USER: ${{ vars.EC2_USER || 'ec2-user' }}
+    steps:
+      - name: Check the tag looks right
+        run: |
+          [[ "$TAG" =~ ^(sha-[0-9a-f]{7}|latest)$ ]] || { echo "::error::Tag must look like sha-1a2b3c4"; exit 1; }
+      - uses: actions/checkout@v7
+      - name: Set up the SSH key
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 15 -H "$HOST" >> ~/.ssh/known_hosts
+      - name: Run the deploy script with the chosen tag
+        run: |
+          scp -i ~/.ssh/deploy_key -o BatchMode=yes scripts/deploy.sh "$SSH_USER@$HOST:/opt/pulse/deploy.sh"
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes "$SSH_USER@$HOST" "bash /opt/pulse/deploy.sh '$IMAGE' '$TAG'"
+          echo "### Rolled back to \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove the SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
